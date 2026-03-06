@@ -1,0 +1,101 @@
+# Network Monitor - Home Assistant Native Version
+# Add this to your configuration.yaml
+
+# First, create the script file via File Editor or Samba share
+# Path: /config/network_monitor.sh
+
+command_line:
+  - sensor:
+      name: Network Ping Router
+      command: "ping -c 3 -W 2 192.168.68.1 | grep 'avg' | awk -F'/' '{print $5}' || echo 'timeout'"
+      unit_of_measurement: "ms"
+      scan_interval: 10
+      
+  - sensor:
+      name: Network Ping Google
+      command: "ping -c 3 -W 2 8.8.8.8 | grep 'avg' | awk -F'/' '{print $5}' || echo 'timeout'"
+      unit_of_measurement: "ms"
+      scan_interval: 10
+      
+  - sensor:
+      name: Network Ping Cloudflare
+      command: "ping -c 3 -W 2 1.1.1.1 | grep 'avg' | awk -F'/' '{print $5}' || echo 'timeout'"
+      unit_of_measurement: "ms"
+      scan_interval: 10
+
+  - sensor:
+      name: Network Hiccup Count Today
+      command: |
+        if [ -f /config/network_hiccups.log ]; then
+          grep "$(date +%Y-%m-%d)" /config/network_hiccups.log | wc -l
+        else
+          echo 0
+        fi
+      scan_interval: 60
+
+# Shell command for intensive noon monitoring
+shell_command:
+  network_monitor_noon: |
+    for i in {1..30}; do
+      timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+      router=$(ping -c 1 -W 2 192.168.68.1 | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' || echo 'timeout')
+      google=$(ping -c 1 -W 2 8.8.8.8 | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' || echo 'timeout')
+      
+      # Log if latency > 100ms
+      if [ "$router" != "timeout" ] && [ "${router%.*}" -gt 100 ] 2>/dev/null; then
+        echo "$timestamp,router,$router" >> /config/network_hiccups.log
+      fi
+      if [ "$google" != "timeout" ] && [ "${google%.*}" -gt 100 ] 2>/dev/null; then
+        echo "$timestamp,google,$google" >> /config/network_hiccups.log
+      fi
+      
+      sleep 1
+    done
+
+# Automation for noon watch
+automation:
+  - alias: "Network Monitor - Noon Watch"
+    trigger:
+      - platform: time
+        at: "11:55:00"
+    action:
+      - service: shell_command.network_monitor_noon
+      - service: notify.persistent_notification
+        data:
+          title: "🕛 Noon Watch Complete"
+          message: "Intensive monitoring 11:55-12:00 done. Check logs."
+
+# Input boolean to enable/disable monitoring
+input_boolean:
+  network_monitoring_active:
+    name: Network Monitoring Active
+    initial: true
+
+# Template sensors for hiccup detection
+template:
+  - sensor:
+      - name: "Network Status"
+        state: |
+          {% set router = states('sensor.network_ping_router') | float(-1) %}
+          {% set google = states('sensor.network_ping_google') | float(-1) %}
+          {% if router == -1 or google == -1 %}
+            unknown
+          {% elif router > 100 or google > 100 %}
+            hiccup
+          {% else %}
+            ok
+          {% endif %}
+        attributes:
+          router_latency: "{{ states('sensor.network_ping_router') }}"
+          google_latency: "{{ states('sensor.network_ping_google') }}"
+          cloudflare_latency: "{{ states('sensor.network_ping_cloudflare') }}"
+
+# Recorder - keep network data longer
+recorder:
+  include:
+    entities:
+      - sensor.network_ping_router
+      - sensor.network_ping_google
+      - sensor.network_ping_cloudflare
+      - sensor.network_status
+      - sensor.network_hiccup_count_today

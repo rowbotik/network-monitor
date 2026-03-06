@@ -1,0 +1,16 @@
+[Unit]
+Description=Network Monitor for HA Pi
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/config/network_monitor
+ExecStart=/usr/bin/python3 /config/network_monitor/network_monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/config/network_monitor/monitor.log
+StandardError=append:/config/network_monitor/monitor.log
+
+[Install]
+WantedBy=multi-user.target
